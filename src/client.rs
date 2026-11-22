@@ -109,6 +109,11 @@ pub mod screenshot;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
 pub const SEC30: Duration = Duration::from_secs(30);
+// A rendezvous server that supports key exchange sends its KeyExchange right after
+// accept, so one second is a generous bound; a pre-exchange (open-source hbbs)
+// server never sends it and must neither block the connection nor cost a full
+// read deadline.
+const SECURE_TCP_OFFER_TIMEOUT: Duration = Duration::from_secs(1);
 // Empirical restart reconnect grace window.
 const RESTART_REMOTE_DEVICE_GRACE: Duration = Duration::from_secs(5 * 60);
 pub const VIDEO_QUEUE_SIZE: usize = 120;
@@ -797,7 +802,7 @@ impl Client {
     async fn _start_inner(
         peer: String,
         key: String,
-        token: String,
+        mut token: String,
         conn_type: ConnType,
         interface: impl Interface,
         mut udp: (Option<Arc<UdpSocket>>, Option<Arc<Mutex<u16>>>),
@@ -887,9 +892,18 @@ impl Client {
             }
         }
         if !exchanged && legacy_secure {
-            secure_tcp(&mut socket, &key)
+            match tokio::time::timeout(SECURE_TCP_OFFER_TIMEOUT, secure_tcp(&mut socket, &key))
                 .await
-                .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
+            {
+                Err(_) => {
+                    log::warn!(
+                        "rendezvous server offers no key exchange, withholding account token"
+                    );
+                    token.clear();
+                }
+                Ok(Err(e)) => return Err(anyhow!("Failed to secure tcp: {}", e)),
+                Ok(Ok(())) => {}
+            }
         }
         // A token or switch code has always taken this socket straight to the punch without
         // waiting for the UDP NAT test. The WebRTC exchange does not replace that wait, it only
@@ -1807,8 +1821,20 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
+            let mut token = token.to_owned();
             if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
-                secure_tcp(&mut socket, key).await?;
+                match tokio::time::timeout(SECURE_TCP_OFFER_TIMEOUT, secure_tcp(&mut socket, key))
+                    .await
+                {
+                    Err(_) => {
+                        log::warn!(
+                            "rendezvous server offers no key exchange, withholding account token"
+                        );
+                        token.clear();
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Ok(Ok(())) => {}
+                }
             }
 
             ipv4 = socket.local_addr().is_ipv4();
@@ -5282,7 +5308,7 @@ pub async fn hc_connection(
 async fn hc_connection_(
     rendezvous_server: String,
     mut rx: UnboundedReceiver<()>,
-    token: String,
+    mut token: String,
 ) -> ResultType<()> {
     let mut timer = crate::rustdesk_interval(interval(crate::TIMER_OUT));
     let mut last_recv_msg = Instant::now();
@@ -5291,7 +5317,15 @@ async fn hc_connection_(
     let host = check_port(&rendezvous_server, RENDEZVOUS_PORT);
     let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
     let key = crate::get_key(true).await;
-    crate::secure_tcp(&mut conn, &key).await?;
+    match tokio::time::timeout(SECURE_TCP_OFFER_TIMEOUT, crate::secure_tcp(&mut conn, &key)).await
+    {
+        Err(_) => {
+            log::warn!("rendezvous server offers no key exchange, withholding account token");
+            token.clear();
+        }
+        Ok(Err(e)) => return Err(e),
+        Ok(Ok(())) => {}
+    }
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_hc(HealthCheck {
         token,
