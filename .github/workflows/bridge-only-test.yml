@@ -1,9 +1,0 @@
-name: Bridge-only test
-
-on:
-  workflow_dispatch:
-
-jobs:
-  call-bridge:
-    uses: ./.github/workflows/bridge.yml
-    secrets: inherit

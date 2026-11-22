@@ -1,9 +1,0 @@
-name: Level2 nesting test
-
-on:
-  workflow_dispatch:
-
-jobs:
-  call-level2:
-    uses: ./.github/workflows/level2-inner.yml
-    secrets: inherit
