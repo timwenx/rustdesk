@@ -1,0 +1,10 @@
+name: Level2 inner
+
+on:
+  workflow_call:
+
+jobs:
+  level2-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "level2 inner ok"
