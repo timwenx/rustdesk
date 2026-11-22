@@ -157,8 +157,6 @@ jobs:
   build-for-windows-flutter:
     name: ${{ matrix.job.target }}
     needs: [build-RustDeskTempTopMostWindow, generate-bridge]
-    permissions:
-      contents: write
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -174,16 +172,16 @@ jobs:
               vcpkg-triplet: x64-windows-static,
               build-args: "--vram",
             }
-#           - {
-#               target: aarch64-pc-windows-msvc,
-#               os: windows-11-arm,
-#               arch: aarch64,
-#               flutter-arch: arm64,
-#               vcpkg-triplet: arm64-windows-static,
-#               # vram is x86/x64-only (NVENC needs CUDA, Intel MediaSDK needs __rdtsc);
-#               # no NV/Intel/AMD hardware exists on Windows-on-ARM, so vram stays disabled here.
-#               build-args: "",
-#             }
+          - {
+              target: aarch64-pc-windows-msvc,
+              os: windows-11-arm,
+              arch: aarch64,
+              flutter-arch: arm64,
+              vcpkg-triplet: arm64-windows-static,
+              # vram is x86/x64-only (NVENC needs CUDA, Intel MediaSDK needs __rdtsc);
+              # no NV/Intel/AMD hardware exists on Windows-on-ARM, so vram stays disabled here.
+              build-args: "",
+            }
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -583,7 +581,6 @@ jobs:
 
   # The fallback for the flutter version, we use Sciter for 32bit Windows.
   build-for-windows-sciter:
-    if: false
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     needs: [validate-update-metadata-keys]
     runs-on: ${{ matrix.job.os }}
@@ -796,7 +793,7 @@ jobs:
             ./SignOutput/rustdesk-*.exe
 
   build-rustdesk-ios:
-    if: false
+    if: ${{ inputs.upload-artifact }}
     name: build rustdesk ios ipa
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
@@ -921,20 +918,18 @@ jobs:
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
     needs: [generate-bridge]
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         job:
-#           - {
-#               target: x86_64-apple-darwin,
-#               os: macos-26-intel, #macos-latest or macos-14 use M1 now, https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners/about-github-hosted-runners#:~:text=14%20GB-,macos%2Dlatest%20or%20macos%2D14,-The%20macos%2Dlatestlabel
-#               extra-build-args: "",
-#               extra-cargo-features: "",
-#               arch: x86_64,
-#               vcpkg-triplet: x64-osx,
-#             }
+          - {
+              target: x86_64-apple-darwin,
+              os: macos-26-intel, #macos-latest or macos-14 use M1 now, https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners/about-github-hosted-runners#:~:text=14%20GB-,macos%2Dlatest%20or%20macos%2D14,-The%20macos%2Dlatestlabel
+              extra-build-args: "",
+              extra-cargo-features: "",
+              arch: x86_64,
+              vcpkg-triplet: x64-osx,
+            }
           - {
               target: aarch64-apple-darwin,
               os: macos-26,
@@ -958,21 +953,22 @@ jobs:
           submodules: recursive
 
       - name: Import the codesign cert
-        if: env.MACOS_P12_BASE64 != ''
+        if: env.MACOS_P12_BASE64 != null
         uses: apple-actions/import-codesign-certs@253ddeeac23f2bdad1646faac5c8c2832e800071 # v1
         with:
           p12-file-base64: ${{ secrets.MACOS_P12_BASE64 }}
           p12-password: ${{ secrets.MACOS_P12_PASSWORD }}
           keychain: rustdesk
+          keychain-password: ${{ secrets.MACOS_P12_PASSWORD }}
 
       - name: Check sign and import sign key
-        if: env.MACOS_P12_BASE64 != ''
+        if: env.MACOS_P12_BASE64 != null
         run: |
           security default-keychain -s rustdesk.keychain
           security find-identity -v
 
       - name: Import notarize key
-        if: env.MACOS_P12_BASE64 != ''
+        if: env.MACOS_P12_BASE64 != null
         uses: timheuer/base64-to-file@adaa40c0c581f276132199d4cf60afa07ce60eac # v1.2
         with:
           # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_rcodesign.html#notarizing-and-stapling
@@ -981,7 +977,7 @@ jobs:
           encodedString: ${{ secrets.MACOS_NOTARIZE_JSON }}
 
       - name: Install rcodesign tool
-        if: env.MACOS_P12_BASE64 != ''
+        if: env.MACOS_P12_BASE64 != null
         shell: bash
         run: |
           pushd /tmp
@@ -1151,7 +1147,7 @@ jobs:
           path: rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg # can not upload the directory directly or tar.gz, which destroy the link structure, causing the codesign failed
 
       - name: Codesign app and create signed dmg
-        if: env.MACOS_P12_BASE64 != '' && env.UPLOAD_ARTIFACT == 'true'
+        if: env.MACOS_P12_BASE64 != null && env.UPLOAD_ARTIFACT == 'true'
         run: |
           # Patch create-dmg to give more attempts to unmount image
           CREATE_DMG="$(command -v create-dmg)"
@@ -1192,7 +1188,7 @@ jobs:
           test -f "rustdesk-${VERSION}-${ARCH}.dmg"
 
       - name: Upload signed macOS DMG
-        if: env.UPLOAD_ARTIFACT == 'true' && env.PUBLISH_UPDATE_METADATA == 'true' && env.MACOS_P12_BASE64 != ''
+        if: env.UPLOAD_ARTIFACT == 'true' && env.PUBLISH_UPDATE_METADATA == 'true' && env.MACOS_P12_BASE64 != null
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-${{ matrix.job.arch }}-dmg
@@ -1430,7 +1426,6 @@ jobs:
           files: rustdesk-${{ env.VERSION }}-unsigned.tar.gz
 
   build-rustdesk-android:
-    if: false
     needs: [generate-bridge]
     name: build rustdesk android apk ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
@@ -1516,6 +1511,20 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
+
+      - name: Check JNI natives are in ffi.FFI
+        # Custom clients rename com.carriez.flutter_hbb; only ffi.FFI keeps its name.
+        shell: bash
+        run: |
+          bad=0
+          grep -rnE --include='*.rs' 'fn Java_' src libs | grep -v 'fn Java_ffi_FFI_' && bad=1
+          grep -rl --include='*.kt' 'external fun' flutter/android \
+            | grep -vx 'flutter/android/app/src/main/kotlin/ffi.kt' && bad=1
+          grep -rn --include='*.rs' 'com/carriez' src libs && bad=1
+          if [ "$bad" = 1 ]; then
+            echo "::error::Declare Android natives in ffi.FFI, export them as Java_ffi_FFI_*, and do not look up app classes by name (see AGENTS.md)"
+            exit 1
+          fi
 
       - name: Install flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -1726,7 +1735,7 @@ jobs:
   build-rustdesk-android-universal:
     needs: [build-rustdesk-android]
     name: build rustdesk android universal apk
-    if: false
+    if: ${{ inputs.upload-artifact }}
     runs-on: ubuntu-24.04
     env:
       reltype: release
@@ -2175,6 +2184,11 @@ jobs:
             export CARGO_INCREMENTAL=0
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             python3 ./build.py --flutter --skip-cargo
+            if [[ "${{ matrix.job.arch }}" == "x86_64" && "${{ inputs.upload-artifact }}" == "false" ]]; then
+              pushd /workspace/flutter
+              flutter test --no-pub --timeout 60s || exit 1
+              popd
+            fi
             for name in rustdesk*??.deb; do
               mv "$name" "${name%%.deb}-${{ matrix.job.arch }}.deb"
             done
